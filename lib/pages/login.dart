@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import 'register.dart';
 import 'dashboard.dart';
+import 'register.dart';
 import 'remember_password.dart';
+import '../services/auth_service.dart';
+
 /// Pantalla de inicio de sesión
 /// Permite al usuario autenticarse con email y contraseña
-/// Incluye checkbox para recordar contraseña y enlaces a recuperación y registro
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -13,11 +14,59 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  /// Indica si el usuario desea que se recuerde su contraseña
-  bool rememberPassword = false;
+  /// Controllers para leer los campos de email y contraseña
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _contrasenyaController = TextEditingController();
 
   /// Controla la visibilidad del texto de la contraseña
   bool obscurePassword = true;
+
+  /// Indica si la petición de login está en curso
+  bool _cargando = false;
+
+  /// Mensaje de error si el login falla
+  String? _error;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _contrasenyaController.dispose();
+    super.dispose();
+  }
+
+  /// Realiza el login llamando al AuthService
+  Future<void> _login() async {
+    if (_emailController.text.isEmpty || _contrasenyaController.text.isEmpty) {
+      setState(() {
+        _error = 'Por favor, introduce el email y la contraseña';
+      });
+      return;
+    }
+
+    setState(() {
+      _cargando = true;
+      _error = null;
+    });
+
+    final exito = await AuthService.login(
+      _emailController.text.trim(),
+      _contrasenyaController.text,
+    );
+
+    if (!mounted) return;
+
+    if (exito) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const DashboardPage()),
+      );
+    } else {
+      setState(() {
+        _cargando = false;
+        _error = 'Email o contraseña incorrectos';
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +101,8 @@ class _LoginPageState extends State<LoginPage> {
 
                 // Campo email
                 TextField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
                     hintText: 'Correo electrónico',
                     filled: true,
@@ -64,8 +115,9 @@ class _LoginPageState extends State<LoginPage> {
 
                 const SizedBox(height: 30),
 
-                // Campo contraseña con toogle de visibilidad
+                // Campo contraseña con toggle de visibilidad
                 TextField(
+                  controller: _contrasenyaController,
                   obscureText: obscurePassword,
                   decoration: InputDecoration(
                     hintText: 'Contraseña',
@@ -74,12 +126,9 @@ class _LoginPageState extends State<LoginPage> {
                     suffixIcon: IconButton(
                       icon: Icon(
                         obscurePassword
-                            //Ojo cerrado
                             ? Icons.visibility_off
-                            // Ojo abierto
                             : Icons.visibility,
                       ),
-                      /// Alterna la visibilidad de la contraseña al pulsar el icono
                       onPressed: () {
                         setState(() {
                           obscurePassword = !obscurePassword;
@@ -92,59 +141,47 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                 ),
 
-                const SizedBox(height: 30),
+                const SizedBox(height: 20),
 
-                // Checkbox recordar contraseña
-                Row(
-                  children: [
-                    Checkbox(
-                      value: rememberPassword,
-                      onChanged: (value) {
-                        setState(() {
-                          rememberPassword = value!;
-                        });
-                      },
+                // Mensaje de error
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(
+                        color: Colors.red,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    const Text(
-                      'Recordar contraseña',
-                      style: TextStyle(color: Color.fromRGBO(74, 59, 42, 1),
-                      fontSize: 16),
-                    ),
-                  ],
-                ),
+                  ),
 
-                const SizedBox(height: 30),
+                const SizedBox(height: 10),
 
                 // Botón de iniciar sesión
                 SizedBox(
                   width: double.infinity,
                   height: 60,
                   child: ElevatedButton(
-                    onPressed: () {
-                      /// Navega al dashboard y reemplaza la pantalla actual
-                      /// Usa pushReplacement para evitar que el usuario vuelva
-                      /// al login con el botón de atrás por seguridad
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const DashboardPage(),
-                        ),
-                      );
-                    },
+                    onPressed: _cargando ? null : _login,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color.fromRGBO(74, 59, 42, 1), // Marrón corporativo
+                      backgroundColor: const Color(0xFF4A3B2A),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: const Text(
-                      'Iniciar sesión',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 25,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    child: _cargando
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text(
+                            'Iniciar sesión',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 25,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                   ),
                 ),
 
@@ -153,13 +190,12 @@ class _LoginPageState extends State<LoginPage> {
                 // Enlace a recuperar contraseña
                 TextButton(
                   onPressed: () {
-                    /// Navega a la pantalla de recuperación de contraseña
                     Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const RememberPasswordPage(),
-                          ),
-                        );
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const RememberPasswordPage(),
+                      ),
+                    );
                   },
                   child: const Text(
                     '¿Has olvidado la contraseña?',
@@ -173,7 +209,7 @@ class _LoginPageState extends State<LoginPage> {
 
                 const SizedBox(height: 20),
 
-                //Enlace a registro
+                // Enlace a registro
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -183,7 +219,6 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     TextButton(
                       onPressed: () {
-                        /// Navega a la pantalla de registro
                         Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -195,7 +230,7 @@ class _LoginPageState extends State<LoginPage> {
                         'Registrarse',
                         style: TextStyle(
                           fontSize: 18,
-                          color: Colors.green, // verde corporativo
+                          color: Colors.green,
                           fontWeight: FontWeight.bold,
                         ),
                       ),

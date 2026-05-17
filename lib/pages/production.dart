@@ -1,16 +1,28 @@
 import 'package:flutter/material.dart';
+import 'dashboard.dart';
+import 'contact.dart';
+import 'report.dart';
+import 'configuration.dart';
+import 'notification.dart';
+import '../services/lot_service.dart';
+import '../services/auth_service.dart';
+import '../services/product_service.dart';
+import '../services/state_lot.dart';
+import '../services/measurement_unit_service.dart';
 
 /// Pantalla de gestión de producción láctea
 /// CARACTERÍSTICAS PRINCIPALES:
-/// 1. Filtrado por fecha: Por defecto muestra los lotes de hoy
-/// 2. DatePicker: Permite cambiar la fecha para ver otros días
-/// 3. CRUD completo: Crear, Leer, Actualizar y Eliminar lotes
-/// 4. Validación de formularios
-/// 5. Feedback visual con SnackBars
+/// 1. Carga de lotes reales desde el backend via LotService
+/// 2. Filtrado por fecha: Por defecto muestra los lotes de hoy
+/// 3. DatePicker: Permite cambiar la fecha para ver otros días
+/// 4. CRUD completo: Crear, Leer, Actualizar y Eliminar lotes — llaman al backend
+/// 5. Validación de formularios
+/// 6. Indicador de carga mientras se obtienen los datos
+/// 7. Feedback visual con SnackBars
 ///
 /// WIDGETS DE ENTRADA UTILIZADOS:
-/// - TextField (tipo, cantidad, lote)
-/// - DropdownButton (unidad, estado)
+/// - TextField (cantidad)
+/// - DropdownButton (productoId, unidadId, estadoId)
 /// - DatePicker (selección de fecha)
 ///
 /// WIDGETS DE SALIDA UTILIZADOS:
@@ -18,140 +30,184 @@ import 'package:flutter/material.dart';
 /// - Card/Material (tarjetas de cada lote)
 /// - AlertDialog (formularios y confirmaciones)
 /// - SnackBar (mensajes de feedback)
+/// - CircularProgressIndicator (indicador de carga)
 /// - Text dinámico (datos de los lotes)
 /// - Icon dinámico (estado con color)
 class ProductionPage extends StatefulWidget {
-  const ProductionPage({super.key});
+  final DateTime? fechaInicial;
+
+  const ProductionPage({super.key, this.fechaInicial});
 
   @override
   State<ProductionPage> createState() => _ProductionPageState();
 }
 
 class _ProductionPageState extends State<ProductionPage> {
-  /// Lista principal de registros de producción
-  List<Map<String, dynamic>> producciones = [
-    {
-      'fecha': DateTime.now(),
-      'tipo': 'Leche entera pasteurizada',
-      'cantidad': 1250,
-      'unidad': 'L',
-      'lote': 'L-2025-11-03',
-      'estado': 'Completado',
-    },
-    {
-      'fecha': DateTime.now(),
-      'tipo': 'Queso semicurado',
-      'cantidad': 965,
-      'unidad': 'kg',
-      'lote': 'L-2025-10-28',
-      'estado': 'En maduración',
-    },
-    {
-      'fecha': DateTime.now(),
-      'tipo': 'Queso fresco',
-      'cantidad': 180,
-      'unidad': 'kg',
-      'lote': 'L-2025-11-01',
-      'estado': 'Envasado',
-    },
-    {
-      'fecha': DateTime.now(),
-      'tipo': 'Flan requesón',
-      'cantidad': 270,
-      'unidad': 'kg',
-      'lote': 'L-2025-10-30',
-      'estado': 'En proceso',
-    },
-  ];
+  /// Lista principal de lotes de producción cargada desde el backend
+  List<Map<String, dynamic>> producciones = [];
 
-  /// Fecha seleccionada por el usuario para filtrar los lotes
-  /// FUNCIONAMIENTO:
-  /// - Por defecto es DateTime.now() (fecha actual)
-  /// - Cambia cuando el usuario selecciona otra fecha en el DatePicker
-  /// - Filtra automáticamente la lista de producciones
-  /// EFECTO:
-  /// Cuando cambia esta variable:
-  /// 1. setState() reconstruye el widget
-  /// 2. _obtenerProduccionesFiltradas() se ejecuta de nuevo
-  /// 3. ListView.builder muestra solo los lotes del día seleccionado
+  bool _cargando = true;
+  String? _error;
+
   DateTime _fechaSeleccionada = DateTime.now();
 
-  /// TextEditingController para el campo "Tipo de producto"
-  /// PROPÓSITO:
-  /// - Lee el texto que el usuario escribe en el TextField
-  /// - Permite prellenar el campo al editar (_tipoController.text = valor)
-  /// - Se limpia después de guardar (_tipoController.clear())
-  final TextEditingController _tipoController = TextEditingController();
-
-  /// TextEditingController para el campo "Cantidad"
-  /// PROPÓSITO:
-  /// - Lee el número que el usuario escribe
-  /// - Se convierte a int al guardar: int.parse(_cantidadController.text)
   final TextEditingController _cantidadController = TextEditingController();
+  final TextEditingController _caducidadController = TextEditingController();
+  final TextEditingController _observacionesController = TextEditingController();
 
-  /// TextEditingController para el campo "Número de lote"
-  /// PROPÓSITO:
-  /// - Captura el código identificador del lote
-  final TextEditingController _loteController = TextEditingController();
+  /// Variables por defecto para los dropdowns (producto, unidad, estado)
+  int _productoIdSeleccionado = 1;
+  int _unidadIdSeleccionada = 1;
+  int _estadoIdSeleccionado = 1;
 
-  /// Unidad seleccionada en el dropdown
-  /// VALORES POSIBLES: 'L', 'kg', 'unidades'
-  /// POR DEFECTO: 'L' (litros)
-  /// FUNCIONAMIENTO:
-  /// - Cuando el usuario selecciona una opción, setState() actualiza este valor
-  /// - El DropdownButtonFormField muestra el valor actual
-  String _unidadSeleccionada = 'L';
+  /// Mapa de productos (dinámico, cargado del backend)
+  Map<int, String> _productos = {};
 
-  /// Estado seleccionado en el dropdown
-  /// VALORES POSIBLES:
-  /// - 'En proceso': Lote en producción
-  /// - 'Completado': Lote finalizado
-  /// - 'En maduración': Productos que requieren tiempo (quesos)
-  /// - 'Envasado': Listo para distribución
-  /// POR DEFECTO: 'En proceso' (para nuevos lotes)
-  String _estadoSeleccionado = 'En proceso';
+  /// Mapa de unidades de medida (dinámico, cargado del backend)
+  Map<int, String> _unidades = {};
 
-  /// Libera los recursos de los controladores al destruir el widget
+  /// Mapa de estados de lote (dinámico, cargado del backend)
+  Map<int, String> _estados = {};
+
+  /// Flags para la carga de los catálogos (unidades, estados y productos)
+  bool _cargandoCatalogos = true;
+  String? _errorCatalogos;
+
+  @override
+  void initState() {
+    super.initState();
+    _fechaSeleccionada = widget.fechaInicial ?? DateTime.now();
+    _cargarDatosIniciales();
+  }
+
+  /// Inicia la carga de lotes y de los catálogos de unidades, estados y productos
+  Future<void> _cargarDatosIniciales() async {
+    // Ambos procesos se pueden lanzar en paralelo
+    await Future.wait([
+      _cargarLotes(),
+      _cargarCatalogos(),
+    ]);
+  }
+
   @override
   void dispose() {
-    _tipoController.dispose();
     _cantidadController.dispose();
-    _loteController.dispose();
+    _caducidadController.dispose();
+    _observacionesController.dispose();
     super.dispose();
   }
 
-  /// Método que filtra la lista de producciones para mostrar solo los lotes del día seleccionado
-  /// LÓGICA:
-  /// 1. Recorre TODOS los lotes de la lista 'producciones'
-  /// 2. Compara la fecha de cada lote con _fechaSeleccionada
-  /// 3. Solo incluye lotes donde año, mes y día coincidan EXACTAMENTE
-  /// DEVUELVE: Lista filtrada con solo los lotes del día seleccionado
+  // CARGA DE DATOS DESDE EL BACKEND
+  Future<void> _cargarLotes() async {
+    setState(() {
+      _cargando = true;
+      _error = null;
+    });
+
+    try {
+      final datos = await LotService.obtenerTodos();
+      setState(() {
+        producciones = List<Map<String, dynamic>>.from(datos);
+        _cargando = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = 'Error al cargar los lotes. Comprueba la conexión.';
+        _cargando = false;
+      });
+    }
+  }
+
+  //Carga los catálogos de unidades, estados y productos desde el backend
+  Future<void> _cargarCatalogos() async {
+    setState(() {
+      _cargandoCatalogos = true;
+      _errorCatalogos = null;
+    });
+
+    try {
+      // Cargamos los tres catálogos en paralelo
+      final resultados = await Future.wait([
+        UnidadMedidaService.obtenerTodas(),
+        EstadoLoteService.obtenerTodos(),
+        ProductService.obtenerTodos(),
+      ]);
+
+      final unidadesData = resultados[0];
+      final estadosData = resultados[1];
+      final productosData = resultados[2];
+
+      // Unidades
+      final Map<int, String> unidadesMap = {};
+      for (var u in unidadesData) {
+        final id = u['id'] as int;
+        final texto = (u['abreviatura'] ?? u['nombre'] ?? '').toString();
+        unidadesMap[id] = texto;
+      }
+
+      // Estados
+      final Map<int, String> estadosMap = {};
+      for (var e in estadosData) {
+        final id = e['id'] as int;
+        final texto = (e['nombre'] ?? '').toString();
+        estadosMap[id] = texto;
+      }
+
+      // Productos
+      final Map<int, String> productosMap = {};
+      for (var p in productosData) {
+        final id = p['id'] as int;
+        final nombre = (p['nombre'] ?? '').toString();
+        productosMap[id] = nombre;
+      }
+
+      setState(() {
+        _unidades = unidadesMap;
+        _estados = estadosMap;
+        _productos = productosMap;
+        _cargandoCatalogos = false;
+
+        // Ajuste de selecciones por defecto: si el ID seleccionado no existe en el nuevo catálogo, se asigna el primero disponible
+        if (_unidades.isNotEmpty && !_unidades.containsKey(_unidadIdSeleccionada)) {
+          _unidadIdSeleccionada = _unidades.keys.first;
+        }
+        if (_estados.isNotEmpty && !_estados.containsKey(_estadoIdSeleccionado)) {
+          _estadoIdSeleccionado = _estados.keys.first;
+        }
+        if (_productos.isNotEmpty && !_productos.containsKey(_productoIdSeleccionado)) {
+          _productoIdSeleccionado = _productos.keys.first;
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _errorCatalogos = 'Error al cargar unidades, estados o productos.';
+        _cargandoCatalogos = false;
+      });
+    }
+  }
+
+  /// Filtra la lista de lotes por la fecha seleccionada
   List<Map<String, dynamic>> _obtenerProduccionesFiltradas() {
     return producciones.where((produccion) {
-      // Obtiene la fecha del lote actual
-      final fechaProduccion = produccion['fecha'] as DateTime;
-
-      // Compara año, mes y día para verificar si es el mismo día
-      return fechaProduccion.year == _fechaSeleccionada.year &&
-          fechaProduccion.month == _fechaSeleccionada.month &&
-          fechaProduccion.day == _fechaSeleccionada.day;
+      try {
+        final fechaElaboracion = DateTime.parse(
+          produccion['fechaElaboracion'] ?? '',
+        );
+        return fechaElaboracion.year == _fechaSeleccionada.year &&
+            fechaElaboracion.month == _fechaSeleccionada.month &&
+            fechaElaboracion.day == _fechaSeleccionada.day;
+      } catch (e) {
+        return false;
+      }
     }).toList();
   }
 
-  /// Estructura de la página (de arriba a abajo)
-  /// Este método se ejecuta automáticamente cuando:
-  /// - Se abre la página por primera vez
-  /// - Se llama setState() (cambio de fecha, agregar/editar/eliminar lote)
-  /// - El usuario cambia la fecha en el DatePicker
   @override
   Widget build(BuildContext context) {
-    // Filtra los lotes según la fecha seleccionada
     final produccionesFiltradas = _obtenerProduccionesFiltradas();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6E9C9),
-
-      // Barra superior con título y botón de volver
       appBar: AppBar(
         backgroundColor: const Color(0xFFF6E9C9),
         elevation: 0,
@@ -160,92 +216,155 @@ class _ProductionPageState extends State<ProductionPage> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      
+      bottomNavigationBar: _buildBottomNavigationBar(context),
       body: SafeArea(
         child: Column(
           children: [
-            //Logo
+            // Logo
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: Image.asset('assets/masets_blanco.png', height: 140),
             ),
             const SizedBox(height: 20),
-
             const Text(
               'PRODUCCIÓN',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
                 color: Color(0xFF4A3B2A),
+                decoration: TextDecoration.underline,
               ),
             ),
             const SizedBox(height: 30),
 
-            // Fila: Fecha actual y botón añadir lote
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Center(
-                // Botón verde para agregar nuevo lote
-                child: ElevatedButton.icon(
-                  onPressed: _mostrarDialogoAgregar,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
+            // Mientras se cargan los catálogos no mostramos el botón de añadir
+            if (!_cargandoCatalogos && _errorCatalogos == null) ...[
+              // Botón añadir lote
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Center(
+                  child: ElevatedButton.icon(
+                    onPressed: _mostrarDialogoAgregar,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  icon: const Icon(Icons.add, color: Colors.white, size: 18),
-                  label: const Text(
-                    'Añadir lote',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                    icon: const Icon(Icons.add, color: Colors.white, size: 18),
+                    label: const Text(
+                      'Añadir lote',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+              const SizedBox(height: 16),
+            ],
 
-            const SizedBox(height: 16),
-
-            // Selector de fecha (DATEPICKER)
+            // Selector de fecha (siempre visible)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: _buildSelectorFecha(),
             ),
-
             const SizedBox(height: 20),
 
-            // Lista de lotes filtrados o mensaje vacío
+            // Contenido principal
             Expanded(
-              child: produccionesFiltradas.isEmpty
-                  // Si no hay lotes en la fecha seleccionada
-                  ? Center(
-                      child: Text(
-                        'No hay registros para el ${_formatearFecha(_fechaSeleccionada)}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          color: Color(0xFF4A3B2A),
-                        ),
-                        textAlign: TextAlign.center,
+              child: _cargandoCatalogos
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF4A3B2A),
                       ),
                     )
-                  // Si hay lotes, muestra la lista dinámica
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      itemCount: produccionesFiltradas.length,
-                      itemBuilder: (context, index) {
-                        // Obtiene el índice real en la lista completa
-                        final produccion = produccionesFiltradas[index];
-                        final indiceReal = producciones.indexOf(produccion);
-                        return _buildProduccionCard(indiceReal);
-                      },
-                    ),
+                  : _errorCatalogos != null
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                _errorCatalogos!,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  color: Color(0xFF4A3B2A),
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 16),
+                              ElevatedButton(
+                                onPressed: _cargarCatalogos,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF4A3B2A),
+                                ),
+                                child: const Text(
+                                  'Reintentar',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : _cargando
+                          ? const Center(
+                              child: CircularProgressIndicator(
+                                color: Color(0xFF4A3B2A),
+                              ),
+                            )
+                          : _error != null
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        _error!,
+                                        style: const TextStyle(
+                                          fontSize: 15,
+                                          color: Color(0xFF4A3B2A),
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      ElevatedButton(
+                                        onPressed: _cargarLotes,
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF4A3B2A),
+                                        ),
+                                        child: const Text(
+                                          'Reintentar',
+                                          style: TextStyle(color: Colors.white),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : produccionesFiltradas.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        'No hay registros para el ${_formatearFechaES(_fechaSeleccionada)}',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          color: Color(0xFF4A3B2A),
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    )
+                                  : ListView.builder(
+                                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                                      itemCount: produccionesFiltradas.length,
+                                      itemBuilder: (context, index) {
+                                        final produccion = produccionesFiltradas[index];
+                                        final indiceReal = producciones.indexOf(produccion);
+                                        return _buildProduccionCard(indiceReal);
+                                      },
+                                    ),
             ),
           ],
         ),
@@ -253,18 +372,13 @@ class _ProductionPageState extends State<ProductionPage> {
     );
   }
 
-  // Selector de fecha:
-  /// - Al hacer clic, llama a _mostrarSelectorFecha()
-  /// - Abre el DatePicker nativo de Flutter
-  /// - Muestra "Hoy - fecha" si es el día actual
-  /// - Muestra solo la fecha si es otro día
+  // SELECTOR DE FECHA
   Widget _buildSelectorFecha() {
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(8),
       elevation: 1,
       child: InkWell(
-        // Al pulsar, abre el DatePicker
         onTap: _mostrarSelectorFecha,
         borderRadius: BorderRadius.circular(8),
         child: Container(
@@ -278,15 +392,8 @@ class _ProductionPageState extends State<ProductionPage> {
             children: [
               Row(
                 children: [
-                  // Icono de calendario
-                  const Icon(
-                    Icons.calendar_today,
-                    color: Color(0xFF4A3B2A),
-                    size: 20,
-                  ),
+                  const Icon(Icons.calendar_today, color: Color(0xFF4A3B2A), size: 20),
                   const SizedBox(width: 12),
-                  // Texto que muestra la fecha
-                  // Lógica: Si es HOY muestra "Hoy - fecha", sino solo "fecha"
                   Text(
                     _fechaSeleccionada.day == DateTime.now().day &&
                             _fechaSeleccionada.month == DateTime.now().month &&
@@ -301,7 +408,6 @@ class _ProductionPageState extends State<ProductionPage> {
                   ),
                 ],
               ),
-              // Flecha indicando que es clickeable
               const Icon(Icons.arrow_drop_down, color: Color(0xFF4A3B2A)),
             ],
           ),
@@ -310,52 +416,37 @@ class _ProductionPageState extends State<ProductionPage> {
     );
   }
 
-  /// Muestra el DatePicker (calendario) para seleccionar una fecha
-  /// - initialDate: Fecha que aparece seleccionada al abrir
-  /// - firstDate: Fecha mínima seleccionable (2020)
-  /// - lastDate: Fecha máxima seleccionable (2030)
-  /// - builder: Personaliza los colores del calendario
   Future<void> _mostrarSelectorFecha() async {
-    // Abre el calendario y espera a que el usuario seleccione
     final DateTime? fechaElegida = await showDatePicker(
       context: context,
       initialDate: _fechaSeleccionada,
       firstDate: DateTime(2020),
       lastDate: DateTime(2030),
-      // Personaliza los colores del calendario
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF4A3B2A), // Color principal (header)
-              onPrimary: Colors.white, // Texto en header
-              onSurface: Color(0xFF4A3B2A), // Días del mes
+              primary: Color(0xFF4A3B2A),
+              onPrimary: Colors.white,
+              onSurface: Color(0xFF4A3B2A),
             ),
           ),
           child: child!,
         );
       },
     );
-
-    // Si el usuario eligió una fecha (no canceló) y es diferente
     if (fechaElegida != null && fechaElegida != _fechaSeleccionada) {
       setState(() {
         _fechaSeleccionada = fechaElegida;
       });
-      // Al llamar setState(), el widget se reconstruye
-      // _obtenerProduccionesFiltradas() se ejecuta de nuevo
-      // La lista muestra solo lotes de la nueva fecha
     }
   }
 
-  // Tarjeta de lotes: Construye una tarjeta individual para mostrar un lote de producción
-  /// - Al pulsar la tarjeta, muestra diálogo con opciones (Editar/Eliminar)
+  // TARJETA DE LOTE
   Widget _buildProduccionCard(int index) {
     final produccion = producciones[index];
-
-    // Obtiene color e icono según el estado del lote
-    final Color estadoColor = _getEstadoColor(produccion['estado']);
-    final IconData estadoIcon = _getEstadoIcon(produccion['estado']);
+    final Color estadoColor = _getEstadoColor(produccion['estadoNombre'] ?? '');
+    final IconData estadoIcon = _getEstadoIcon(produccion['estadoNombre'] ?? '');
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -364,7 +455,6 @@ class _ProductionPageState extends State<ProductionPage> {
         borderRadius: BorderRadius.circular(12),
         elevation: 2,
         child: InkWell(
-          // Al pulsar, muestra opciones (Editar/Eliminar)
           onTap: () => _mostrarOpcionesLote(index),
           borderRadius: BorderRadius.circular(12),
           child: Container(
@@ -376,13 +466,12 @@ class _ProductionPageState extends State<ProductionPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Fila superior: Tipo de producto y Estado
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Expanded(
                       child: Text(
-                        produccion['tipo'],
+                        produccion['productoNombre'] ?? '',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -392,31 +481,26 @@ class _ProductionPageState extends State<ProductionPage> {
                     ),
                     Row(
                       children: [
-                        // Icon cambia según el estado
                         Icon(estadoIcon, size: 20, color: estadoColor),
                         const SizedBox(width: 6),
-                        // Text muestra el estado y cambia de color
                         Text(
-                          produccion['estado'],
+                          produccion['estadoNombre'] ?? '',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
-                            color: estadoColor, // Verde o naranja
+                            color: estadoColor,
                           ),
                         ),
                       ],
                     ),
                   ],
                 ),
-
                 const SizedBox(height: 12),
-
-                // Fila inferior: Cantidad y Número de lote
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '${produccion['cantidad']} ${produccion['unidad']}',
+                      '${(produccion['cantidad'] as num?)?.toStringAsFixed(0) ?? ''} ${produccion['unidadMedidaAbreviatura'] ?? ''}',
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -424,13 +508,21 @@ class _ProductionPageState extends State<ProductionPage> {
                       ),
                     ),
                     Text(
-                      produccion['lote'],
+                      'Cad: ${_convertirFechaBackendaES(produccion['fechaCaducidad'] ?? '')}',
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 13,
                         color: Color(0xFF4A3B2A),
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Por: ${produccion['usuarioCreadorNombre'] ?? ''}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: const Color(0xFF4A3B2A).withValues(alpha: 0.7),
+                  ),
                 ),
               ],
             ),
@@ -440,20 +532,14 @@ class _ProductionPageState extends State<ProductionPage> {
     );
   }
 
-  /// Muestra un diálogo con opciones para el lote seleccionado:
-  /// - Editar lote
-  /// - Eliminar lote
-  /// - Cancelar
+  // DIÁLOGOS
   void _mostrarOpcionesLote(int index) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text(
           'Opciones del lote',
-          style: TextStyle(
-            color: Color(0xFF4A3B2A),
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: Color(0xFF4A3B2A), fontWeight: FontWeight.bold),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -462,8 +548,6 @@ class _ProductionPageState extends State<ProductionPage> {
               leading: const Icon(Icons.edit, color: Colors.blue),
               title: const Text('Editar lote'),
               onTap: () {
-                /// Cierra el diálogo de opciones antes de abrir el formulario de edición
-                /// Usa pop() para quitar solo el diálogo actual de la pila
                 Navigator.pop(context);
                 _mostrarDialogoEditar(index);
               },
@@ -472,8 +556,6 @@ class _ProductionPageState extends State<ProductionPage> {
               leading: const Icon(Icons.delete, color: Colors.red),
               title: const Text('Eliminar lote'),
               onTap: () {
-                /// Cierra el diálogo de opciones antes de mostrar confirmación
-                /// Usa pop() para quitar solo el diálogo actual de la pila
                 Navigator.pop(context);
                 _confirmarEliminacion(index);
               },
@@ -482,65 +564,52 @@ class _ProductionPageState extends State<ProductionPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              /// Cierra el diálogo sin realizar ninguna acción
-              /// Usa pop() para quitar el diálogo de la pila
-              Navigator.pop(context);
-            },
-            child: const Text(
-              'Cancelar',
-              style: TextStyle(color: Color(0xFF4A3B2A)),
-            ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Color(0xFF4A3B2A))),
           ),
         ],
       ),
     );
   }
 
-  /// Muestra diálogo de confirmación antes de eliminar un lote
   void _confirmarEliminacion(int index) {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text(
           '¿Eliminar lote?',
-          style: TextStyle(
-            color: Color(0xFF4A3B2A),
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: Color(0xFF4A3B2A), fontWeight: FontWeight.bold),
         ),
-        content: const Text(
-          '¿Estás seguro de que deseas eliminar este registro de producción?',
-        ),
+        content: const Text('¿Estás seguro de que deseas eliminar este registro de producción?'),
         actions: [
           TextButton(
-            onPressed: () {
-              /// Cierra el diálogo de confirmación sin eliminar el lote
-              /// Usa pop() para volver a la lista sin cambios
-              Navigator.pop(context);
-            },
-            child: const Text(
-              'Cancelar',
-              style: TextStyle(color: Color(0xFF4A3B2A)),
-            ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Color(0xFF4A3B2A))),
           ),
           TextButton(
-            onPressed: () {
-              // Elimina el lote de la lista
-              setState(() {
-                producciones.removeAt(index);
-              });
-
-              /// Cierra el diálogo de confirmación tras eliminar el lote
-              /// Usa pop() para volver a la lista actualizada sin el lote eliminado
-              Navigator.pop(context);
-              // SnackBar con mensaje de éxito
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Lote eliminado correctamente'),
-                  backgroundColor: Colors.green,
-                ),
-              );
+            onPressed: () async {
+              final lote = producciones[index];
+              try {
+                await LotService.eliminar(lote['id']);
+                await _cargarLotes();
+                navigator.pop();
+                scaffoldMessenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Lote eliminado correctamente'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                navigator.pop();
+                scaffoldMessenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Error al eliminar el lote'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
             },
             child: const Text(
               'Eliminar',
@@ -552,112 +621,145 @@ class _ProductionPageState extends State<ProductionPage> {
     );
   }
 
-  /// Prepara y muestra el formulario para agregar un nuevo lote
   void _mostrarDialogoAgregar() {
     _limpiarFormulario();
     _mostrarDialogoFormulario('Nuevo lote', null);
   }
 
-  /// Prepara y muestra el formulario para editar un lote existente:
-  /// 1. Lee los datos del lote seleccionado
-  /// 2. Prellena los controllers con esos datos
-  /// 3. Muestra el formulario
   void _mostrarDialogoEditar(int index) {
     final produccion = producciones[index];
-    _tipoController.text = produccion['tipo'];
-    _cantidadController.text = produccion['cantidad'].toString();
-    _loteController.text = produccion['lote'];
-    _unidadSeleccionada = produccion['unidad'];
-    _estadoSeleccionado = produccion['estado'];
+    _cantidadController.text =
+        (produccion['cantidad'] as num?)?.toStringAsFixed(0) ?? '';
+    _caducidadController.text =
+        _convertirFechaBackendaES(produccion['fechaCaducidad'] ?? '');
+    _observacionesController.text = produccion['observaciones'] ?? '';
+
+    // Usamos los mapas dinámicos _unidades y _estados
+    // para encontrar el ID correspondiente a la abreviatura o nombre almacenado en el lote
+    final unidadAbrev = produccion['unidadMedidaAbreviatura'] ?? 'L';
+    _unidadIdSeleccionada = _unidades.entries
+        .firstWhere(
+          (e) => e.value == unidadAbrev,
+          orElse: () => _unidades.entries.isNotEmpty
+              ? _unidades.entries.first
+              : const MapEntry(1, 'L'),
+        )
+        .key;
+
+    _estadoIdSeleccionado = _estados.entries
+        .firstWhere(
+          (e) => e.value == produccion['estadoNombre'],
+          orElse: () => _estados.entries.isNotEmpty
+              ? _estados.entries.first
+              : const MapEntry(1, 'EN_PROCESO'),
+        )
+        .key;
+
     _mostrarDialogoFormulario('Editar lote', index);
   }
 
-  /// Muestra el formulario en un AlertDialog
   void _mostrarDialogoFormulario(String titulo, int? index) {
+    final navigator = Navigator.of(context);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          titulo,
-          style: const TextStyle(
-            color: Color(0xFF4A3B2A),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _campoTexto(
-                controller: _tipoController,
-                label: 'Tipo de producto',
-              ),
-              _campoTexto(
-                controller: _cantidadController,
-                label: 'Cantidad',
-                esNumerico: true,
-              ),
-              const SizedBox(height: 16),
-              _dropdownUnidad(),
-              const SizedBox(height: 16),
-              _campoTexto(controller: _loteController, label: 'Número de lote'),
-              _dropdownEstado(),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              /// Cierra el formulario sin guardar cambios
-              /// Usa pop() para descartar la operación y volver a la lista
-              Navigator.pop(context);
-            },
-            child: const Text(
-              'Cancelar',
-              style: TextStyle(color: Color(0xFF4A3B2A)),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: Text(
+            titulo,
+            style: const TextStyle(
+              color: Color(0xFF4A3B2A),
+              fontWeight: FontWeight.bold,
             ),
           ),
-          TextButton(
-            onPressed: () {
-              if (_validarFormulario()) {
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (index == null)
+                  _dropdownFormulario(
+                    label: 'Producto',
+                    valor: _productoIdSeleccionado,
+                    opciones: _productos,
+                    onChanged: (v) =>
+                        setStateDialog(() => _productoIdSeleccionado = v!),
+                  ),
+                if (index == null) const SizedBox(height: 12),
+                _campoTexto(
+                  controller: _cantidadController,
+                  label: 'Cantidad',
+                  esNumerico: true,
+                ),
+                // Usamos los mapas dinámicos _unidades y _estados
+                // para mostrar las opciones correctas en los dropdowns
+                _dropdownFormulario(
+                  label: 'Unidad de medida',
+                  valor: _unidadIdSeleccionada,
+                  opciones: _unidades,
+                  onChanged: (v) =>
+                      setStateDialog(() => _unidadIdSeleccionada = v!),
+                ),
+                const SizedBox(height: 12),
+                _campoTexto(
+                  controller: _caducidadController,
+                  label: 'Fecha caducidad (DD/MM/AAAA)',
+                ),
+                _dropdownFormulario(
+                  label: 'Estado',
+                  valor: _estadoIdSeleccionado,
+                  opciones: _estados,
+                  onChanged: (v) =>
+                      setStateDialog(() => _estadoIdSeleccionado = v!),
+                ),
+                const SizedBox(height: 12),
+                _campoTexto(
+                  controller: _observacionesController,
+                  label: 'Observaciones',
+                  maxLines: 2,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar',
+                  style: TextStyle(color: Color(0xFF4A3B2A))),
+            ),
+            TextButton(
+              onPressed: () async {
+                if (!_validarFormulario()) return;
                 if (index == null) {
-                  _agregarProduccion();
+                  await _agregarProduccion();
                 } else {
-                  _editarProduccion(index);
+                  await _editarProduccion(index);
                 }
-
-                /// Cierra el formulario tras guardar los cambios
-                /// Usa pop() para volver a la lista actualizada con el nuevo/editado lote
-                Navigator.pop(context);
-              }
-            },
-            child: const Text(
-              'Guardar',
-              style: TextStyle(
-                color: Colors.green,
-                fontWeight: FontWeight.bold,
+                navigator.pop();
+              },
+              child: const Text(
+                'Guardar',
+                style: TextStyle(
+                    color: Colors.green, fontWeight: FontWeight.bold),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  /// Widget reutilizable para campos de texto del formulario:
-  /// - controller: TextEditingController para leer/escribir el texto
-  /// - label: Etiqueta que aparece en el campo
-  /// - esNumerico: Si true, muestra teclado numérico
+  // WIDGETS DE FORMULARIO
   Widget _campoTexto({
     required TextEditingController controller,
     required String label,
     bool esNumerico = false,
+    int maxLines = 1,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: TextField(
         controller: controller,
         keyboardType: esNumerico ? TextInputType.number : TextInputType.text,
+        maxLines: maxLines,
         decoration: InputDecoration(
           labelText: label,
           labelStyle: const TextStyle(color: Color(0xFF4A3B2A)),
@@ -680,13 +782,16 @@ class _ProductionPageState extends State<ProductionPage> {
     );
   }
 
-  /// Dropdown para seleccionar la unidad de medida:
-  /// 'L', 'kg', 'unidades'
-  Widget _dropdownUnidad() {
-    return DropdownButtonFormField<String>(
-      value: _unidadSeleccionada,
+  Widget _dropdownFormulario({
+    required String label,
+    required int valor,
+    required Map<int, String> opciones,
+    required ValueChanged<int?> onChanged,
+  }) {
+    return DropdownButtonFormField<int>(
+      initialValue: valor,
       decoration: InputDecoration(
-        labelText: 'Unidad',
+        labelText: label,
         labelStyle: const TextStyle(color: Color(0xFF4A3B2A)),
         filled: true,
         fillColor: Colors.white,
@@ -703,65 +808,21 @@ class _ProductionPageState extends State<ProductionPage> {
           borderSide: const BorderSide(color: Color(0xFF4A3B2A), width: 2),
         ),
       ),
-      items: ['L', 'kg', 'unidades'].map((String unidad) {
-        return DropdownMenuItem<String>(value: unidad, child: Text(unidad));
+      items: opciones.entries.map((entry) {
+        return DropdownMenuItem<int>(
+          value: entry.key,
+          child: Text(entry.value),
+        );
       }).toList(),
-      onChanged: (String? nuevoValor) {
-        setState(() {
-          _unidadSeleccionada = nuevoValor!;
-        });
-      },
+      onChanged: onChanged,
     );
   }
 
-  /// Dropdown para seleccionar el estado del lote:
-  /// 'En proceso', 'Completado', 'En maduración', 'Envasado'
-  Widget _dropdownEstado() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 16),
-      child: DropdownButtonFormField<String>(
-        value: _estadoSeleccionado,
-        decoration: InputDecoration(
-          labelText: 'Estado',
-          labelStyle: const TextStyle(color: Color(0xFF4A3B2A)),
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFF4A3B2A)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFF4A3B2A)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFF4A3B2A), width: 2),
-          ),
-        ),
-        items: ['En proceso', 'Completado', 'En maduración', 'Envasado'].map((
-          String estado,
-        ) {
-          return DropdownMenuItem<String>(value: estado, child: Text(estado));
-        }).toList(),
-        onChanged: (String? nuevoValor) {
-          setState(() {
-            _estadoSeleccionado = nuevoValor!;
-          });
-        },
-      ),
-    );
-  }
-
-  /// Valida que todos los campos del formulario estén completos
+  // LÓGICA DE DATOS
   bool _validarFormulario() {
-    if (_tipoController.text.isEmpty ||
-        _cantidadController.text.isEmpty ||
-        _loteController.text.isEmpty) {
-      // SnackBar con mensaje de error
+    if (_cantidadController.text.isEmpty || _caducidadController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          // SnackBar de error si algún campo está vacío
           content: Text('Por favor, completa todos los campos'),
           backgroundColor: Colors.red,
         ),
@@ -771,142 +832,212 @@ class _ProductionPageState extends State<ProductionPage> {
     return true;
   }
 
-  /// Agrega un nuevo lote a la lista de producciones
-  /// PROCESO:
-  /// 1. Lee los valores de los controllers
-  /// 2. Crea un Map con toda la información
-  /// 3. Inserta al inicio de la lista (index 0)
-  /// 4. Actualiza la UI con setState()
-  /// 5. Muestra SnackBar de éxito
-  /// 6. Limpia el formulario
-  void _agregarProduccion() {
-    setState(() {
-      producciones.insert(0, {
-        'fecha': _fechaSeleccionada, // ← Usa la fecha seleccionada actualmente
-        'tipo': _tipoController.text,
-        'cantidad': int.parse(_cantidadController.text),
-        'unidad': _unidadSeleccionada,
-        'lote': _loteController.text,
-        'estado': _estadoSeleccionado,
+  Future<void> _agregarProduccion() async {
+    try {
+      await LotService.crear({
+        'producto': {'id': _productoIdSeleccionado},
+        'cantidad': double.parse(_cantidadController.text),
+        'unidadMedida': {'id': _unidadIdSeleccionada},
+        'fechaElaboracion': _formatearFechaBackend(_fechaSeleccionada),
+        'fechaCaducidad': _convertirFechaESaBackend(_caducidadController.text),
+        'estado': {'id': _estadoIdSeleccionado},
+        'usuarioCreador': {'id': AuthService.usuarioId},
+        'observaciones': _observacionesController.text,
       });
-    });
-    // SnackBar con mensaje de éxito
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Lote agregado correctamente'),
-        backgroundColor: Colors.green,
-      ),
-    );
+      await _cargarLotes();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Lote agregado correctamente'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error al agregar el lote'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
     _limpiarFormulario();
   }
 
-  /// Edita un lote existente en la lista
-  /// PROCESO:
-  /// 1. Lee los valores de los controllers
-  /// 2. Actualiza el Map en la posición 'index'
-  /// 3. Mantiene la fecha original del lote (no cambia)
-  /// 4. Actualiza la UI con setState()
-  /// 5. Muestra SnackBar de éxito
-  /// 6. Limpia el formulario
-  void _editarProduccion(int index) {
-    setState(() {
-      producciones[index] = {
-        'fecha': producciones[index]['fecha'], // ← Mantiene la fecha original
-        'tipo': _tipoController.text,
-        'cantidad': int.parse(_cantidadController.text),
-        'unidad': _unidadSeleccionada,
-        'lote': _loteController.text,
-        'estado': _estadoSeleccionado,
-      };
-    });
-    // SnackBar con mensaje de éxito
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Lote actualizado correctamente'),
-        backgroundColor: Colors.green,
-      ),
-    );
+  Future<void> _editarProduccion(int index) async {
+    final lote = producciones[index];
+    try {
+      await LotService.actualizar(lote['id'], {
+        'id': lote['id'],
+        'producto': {'id': lote['productoId']},
+        'fechaElaboracion': lote['fechaElaboracion'],
+        'cantidad': double.parse(_cantidadController.text),
+        'unidadMedida': {'id': _unidadIdSeleccionada},
+        'fechaCaducidad': _convertirFechaESaBackend(_caducidadController.text),
+        'estado': {'id': _estadoIdSeleccionado},
+        'observaciones': _observacionesController.text,
+      });
+      await _cargarLotes();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Lote actualizado correctamente'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error al actualizar el lote'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
     _limpiarFormulario();
   }
 
-  /// Limpia todos los campos del formulario
   void _limpiarFormulario() {
-    _tipoController.clear();
     _cantidadController.clear();
-    _loteController.clear();
-    _unidadSeleccionada = 'L';
-    _estadoSeleccionado = 'En proceso';
+    _caducidadController.clear();
+    _observacionesController.clear();
+    _productoIdSeleccionado = 1;
+    _unidadIdSeleccionada = 1;
+    _estadoIdSeleccionado = 1;
   }
 
-  /// Métodos de ayuda: Colores e iconos
-  /// Retorna el color según el estado del lote
-  /// MAPEO:
-  /// - 'Completado' → Verde
-  /// - 'En proceso' → Naranja
-  /// - 'En maduración' → Naranja
-  /// - 'Envasado' → Verde
-  /// - Otro → Gris
+  // ─────────────────────────────────────────────
+  // HELPERS: COLORES E ICONOS (sin cambios)
+  // ─────────────────────────────────────────────
   Color _getEstadoColor(String estado) {
     switch (estado) {
-      case 'Completado':
+      case 'COMPLETADO':
         return Colors.green;
-      case 'En proceso':
+      case 'EN_PROCESO':
         return Colors.orange;
-      case 'En maduración':
+      case 'EN_MADURACION':
         return Colors.orange;
-      case 'Envasado':
+      case 'ENVASADO':
         return Colors.green;
+      case 'RECHAZADO':
+        return Colors.red;
       default:
         return Colors.grey;
     }
   }
 
-  /// Retorna el icono según el estado del lote
-  /// MAPEO:
-  /// - 'Completado' → ✓ (check_circle)
-  /// - 'En proceso' → ⏳ (hourglass_empty)
-  /// - 'En maduración' → ⏳ (hourglass_empty)
-  /// - 'Envasado' → ✓ (check_circle)
-  /// - Otro → ? (help_outline)
   IconData _getEstadoIcon(String estado) {
     switch (estado) {
-      case 'Completado':
+      case 'COMPLETADO':
         return Icons.check_circle;
-      case 'En proceso':
+      case 'EN_PROCESO':
         return Icons.hourglass_empty;
-      case 'En maduración':
+      case 'EN_MADURACION':
         return Icons.hourglass_empty;
-      case 'Envasado':
+      case 'ENVASADO':
         return Icons.check_circle;
+      case 'RECHAZADO':
+        return Icons.cancel;
       default:
         return Icons.help_outline;
     }
   }
 
-  /// Formatea una fecha al formato español sin día de la semana:
-  /// 1. Extrae día, mes y año
-  /// 2. Convierte el número del mes a nombre español
-  /// 3. Construye el string con formato español
+  // FORMATEO DE FECHAS
   String _formatearFecha(DateTime fecha) {
     final meses = [
-      'enero',
-      'febrero',
-      'marzo',
-      'abril',
-      'mayo',
-      'junio',
-      'julio',
-      'agosto',
-      'septiembre',
-      'octubre',
-      'noviembre',
-      'diciembre',
+      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
     ];
+    return '${fecha.day} de ${meses[fecha.month - 1]} de ${fecha.year}';
+  }
 
-    final dia = fecha.day;
-    final mes = meses[fecha.month - 1];
-    final year = fecha.year;
+  String _formatearFechaES(DateTime fecha) {
+    return '${fecha.day.toString().padLeft(2, '0')}/'
+        '${fecha.month.toString().padLeft(2, '0')}/'
+        '${fecha.year}';
+  }
 
-    return '$dia de $mes de $year';
+  String _formatearFechaBackend(DateTime fecha) {
+    return '${fecha.year}-'
+        '${fecha.month.toString().padLeft(2, '0')}-'
+        '${fecha.day.toString().padLeft(2, '0')}';
+  }
+
+  String _convertirFechaESaBackend(String fechaES) {
+    try {
+      final partes = fechaES.split('/');
+      final dia = partes[0].padLeft(2, '0');
+      final mes = partes[1].padLeft(2, '0');
+      final anio = partes[2];
+      return '$anio-$mes-$dia';
+    } catch (e) {
+      return fechaES;
+    }
+  }
+
+  String _convertirFechaBackendaES(String fechaBackend) {
+    try {
+      final partes = fechaBackend.split('-');
+      final anio = partes[0];
+      final mes = partes[1];
+      final dia = partes[2];
+      return '$dia/$mes/$anio';
+    } catch (e) {
+      return fechaBackend;
+    }
+  }
+
+  // BOTTOM NAVIGATION BAR
+  Widget _buildBottomNavigationBar(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(color: Color(0xFF4A3B2A)),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNavItem(icon: Icons.people_outline, isSelected: false, onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const ContactPage()));
+              }),
+              _buildNavItem(icon: Icons.bar_chart_outlined, isSelected: false, onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const ReportPage()));
+              }),
+              _buildNavItem(icon: Icons.home, isSelected: false, onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const DashboardPage()));
+              }),
+              _buildNavItem(icon: Icons.notifications_outlined, isSelected: false, onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const NotificationPage()));
+              }),
+              _buildNavItem(icon: Icons.settings_outlined, isSelected: false, onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const ConfigurationPage()));
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem({
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Icon(
+          icon,
+          size: 28,
+          color: isSelected
+              ? const Color(0xFFF6E9C9)
+              : const Color(0xFFF6E9C9).withValues(alpha: 0.5),
+        ),
+      ),
+    );
   }
 }

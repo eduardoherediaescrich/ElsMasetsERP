@@ -1,9 +1,18 @@
 import 'package:flutter/material.dart';
 import 'production.dart';
+import 'stock.dart';
+import 'report.dart';
+import 'calendar.dart';
+import 'contact.dart';
+import 'configuration.dart';
+import 'incident.dart';
+import 'notification.dart';
+import '../services/auth_service.dart';
 
 /// Pantalla principal del Dashboard
 /// Muestra los módulos principales de la aplicación: Producción, Stock, Incidencias
 /// y accesos rápidos a Contactos, Informes y Calendario
+/// El saludo usa el nombre real del usuario logueado via AuthService
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
 
@@ -23,86 +32,134 @@ class DashboardPage extends StatelessWidget {
                 // Logo
                 Image.asset('assets/masets_blanco.png', height: 140),
 
-                const SizedBox(height: 100),
+                const SizedBox(height: 40),
 
-                // Tarjeta principal: PRODUCCIÓN
-                _buildMainCard(
-                  context: context,
-                  title: 'PRODUCCIÓN',
-                  icon: Icons.trending_up,
-                  onTap: () {
-                    /// Navega a la pantalla de gestión de producción
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const ProductionPage(),
-                      ),
-                    );
-                  },
+                /// Saludo con el nombre real del usuario logueado
+                /// AuthService.usuarioNombre se establece al hacer login
+                Center(
+                  child: Text(
+                    'HOLA ${(AuthService.usuarioNombre ?? 'USUARIO').toUpperCase()}',
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF4A3B2A),
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
                 ),
+                const SizedBox(height: 40),
 
-                const SizedBox(height: 30),
-
-                // Fila con STOCK e INCIDENCIAS
+                // Fila 1: Producción - Stock
                 Row(
                   children: [
-                    // Tarjeta de Stock
                     Expanded(
-                      child: _buildSecondaryCard(
+                      child: _buildMainCard(
+                        context: context,
+                        title: 'PRODUCCIÓN',
+                        icon: Icons.trending_up,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const ProductionPage(),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: _buildMainCard(
                         context: context,
                         title: 'STOCK',
                         icon: Icons.inventory_2_outlined,
                         onTap: () {
-                          // Próximamente navegará a la pantalla de Stock
-                        },
-                      ),
-                    ),
-
-                    const SizedBox(width: 50),
-
-                    // Tarjeta de Incidencias
-                    Expanded(
-                      child: _buildSecondaryCard(
-                        context: context,
-                        title: 'INCIDENCIAS',
-                        icon: Icons.warning_amber_outlined,
-                        onTap: () {
-                          // Próximamente navegará a la pantalla de Incidencias
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const StockPage(),
+                            ),
+                          );
                         },
                       ),
                     ),
                   ],
                 ),
 
-                const SizedBox(height: 90),
+                const SizedBox(height: 20),
 
-                // Fila con tarjetas más pequeñas
+                // Fila 2: Incidencias - Informes
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _buildSmallCard(
-                      context: context,
-                      title: 'CONTACTOS',
-                      icon: Icons.people_outline,
-                      onTap: () {
-                        // Próximamente navegará a Contactos
-                      },
+                    Expanded(
+                      child: _buildMainCard(
+                        context: context,
+                        title: 'INCIDENCIAS',
+                        icon: Icons.warning_amber_outlined,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const IncidentPage(),
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                    _buildSmallCard(
-                      context: context,
-                      title: 'INFORMES',
-                      icon: Icons.bar_chart_outlined,
-                      onTap: () {
-                        // Próximamente navegará a Informes
-                      },
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: _buildMainCard(
+                        context: context,
+                        title: 'INFORMES',
+                        icon: Icons.bar_chart_outlined,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const ReportPage(),
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                    _buildSmallCard(
-                      context: context,
-                      title: 'CALENDARIO',
-                      icon: Icons.calendar_today_outlined,
-                      onTap: () {
-                        // Próximamente navegará a Calendario
-                      },
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                // Fila 3: Calendario - Contactos
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildMainCard(
+                        context: context,
+                        title: 'CALENDARIO',
+                        icon: Icons.calendar_today_outlined,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const CalendarPage(),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: _buildMainCard(
+                        context: context,
+                        title: 'CONTACTOS',
+                        icon: Icons.people_outline,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const ContactPage(),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ],
                 ),
@@ -119,91 +176,8 @@ class DashboardPage extends StatelessWidget {
     );
   }
 
-  /// Construye la barra de navegación inferior
-  /// Contiene 5 iconos: Contactos, Informes, Home, Notificaciones y Configuración
-  Widget _buildBottomNavigationBar(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(color: Color(0xFF4A3B2A)),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              // Icono de Contactos
-              _buildNavItem(
-                icon: Icons.people_outline,
-                isSelected: false,
-                onTap: () {
-                  // Próximamente navegará a Contactos
-                },
-              ),
-              // Icono de Informes
-              _buildNavItem(
-                icon: Icons.bar_chart_outlined,
-                isSelected: false,
-                onTap: () {
-                  // Próximamente navegará a Informes
-                },
-              ),
-              // Icono de Home
-              _buildNavItem(
-                icon: Icons.home,
-                isSelected: true,
-                onTap: () {
-                  // Ya estamos en Home
-                },
-              ),
-              // Icono de Notificaciones
-              _buildNavItem(
-                icon: Icons.notifications_outlined,
-                isSelected: false,
-                onTap: () {
-                  // Próximamente navegará a Notificaciones
-                },
-              ),
-              // Icono de Configuración
-              _buildNavItem(
-                icon: Icons.settings_outlined,
-                isSelected: false,
-                onTap: () {
-                  // Próximamente navegará a Configuración
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Construye cada icono de la barra de navegación
-  /// El color cambia según si está seleccionado o no
-  Widget _buildNavItem({
-    required IconData icon,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Icon(
-          icon,
-          size: 28,
-          // Si está seleccionado, color beige completo; si no, semi-transparente
-          color: isSelected
-              ? const Color(0xFFF6E9C9)
-              : const Color(0xFFF6E9C9).withValues(alpha: 0.5),
-        ),
-      ),
-    );
-  }
-
-  /// Construye la tarjeta principal (PRODUCCIÓN)
-  /// Es más grande y tiene un diseño horizontal con el título a la izquierda
-  /// y el icono a la derecha dentro de un contenedor
+  /// Construye cada tarjeta del dashboard
+  /// Diseño horizontal: título a la izquierda, icono en recuadro a la derecha
   Widget _buildMainCard({
     required BuildContext context,
     required String title,
@@ -240,7 +214,7 @@ class DashboardPage extends StatelessWidget {
                   ),
                 ),
               ),
-              // Icono a la derecha dentro de un contenedor
+              // Icono a la derecha dentro de un contenedor con borde
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Container(
@@ -253,7 +227,8 @@ class DashboardPage extends StatelessWidget {
                     ),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(icon, size: 44, color: const Color(0xFF4A3B2A)),
+                  child:
+                      Icon(icon, size: 44, color: const Color(0xFF4A3B2A)),
                 ),
               ),
             ],
@@ -263,43 +238,67 @@ class DashboardPage extends StatelessWidget {
     );
   }
 
-  /// Construye las tarjetas secundarias (STOCK e INCIDENCIAS)
-  /// Son cuadradas y tienen un diseño vertical con el icono arriba y el título abajo
-  Widget _buildSecondaryCard({
-    required BuildContext context,
-    required String title,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      elevation: 2,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        splashColor: const Color(0xFF4A3B2A).withValues(alpha: 0.1),
-        child: Container(
-          height: 120,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF4A3B2A), width: 2),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+  /// Construye la barra de navegación inferior
+  /// Home está marcado como activo ya que estamos en el Dashboard
+  Widget _buildBottomNavigationBar(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(color: Color(0xFF4A3B2A)),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              // Icono grande en el centro
-              Icon(icon, size: 50, color: const Color(0xFF4A3B2A)),
-              const SizedBox(height: 12),
-              // Título debajo del icono
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF4A3B2A),
-                  letterSpacing: 0.3,
-                ),
+              _buildNavItem(
+                icon: Icons.people_outline,
+                isSelected: false,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const ContactPage()),
+                  );
+                },
+              ),
+              _buildNavItem(
+                icon: Icons.bar_chart_outlined,
+                isSelected: false,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const ReportPage()),
+                  );
+                },
+              ),
+              _buildNavItem(
+                icon: Icons.home,
+                isSelected: true, // Estamos en Home → activo
+                onTap: () {
+                  // Ya estamos en Home
+                },
+              ),
+              _buildNavItem(
+                icon: Icons.notifications_outlined,
+                isSelected: false,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const NotificationPage()),
+                  );
+                },
+              ),
+              _buildNavItem(
+                icon: Icons.settings_outlined,
+                isSelected: false,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const ConfigurationPage()),
+                  );
+                },
               ),
             ],
           ),
@@ -308,46 +307,24 @@ class DashboardPage extends StatelessWidget {
     );
   }
 
-  /// Construye las tarjetas pequeñas (Contactos, Informes, Calendario)
-  /// Son más pequeñas que las secundarias pero mantienen el mismo estilo vertical
-  Widget _buildSmallCard({
-    required BuildContext context,
-    required String title,
+  /// Construye cada icono de la barra de navegación
+  /// Color beige completo si activo, semi-transparente si no
+  Widget _buildNavItem({
     required IconData icon,
+    required bool isSelected,
     required VoidCallback onTap,
   }) {
-    return Material(
-      color: Colors.white,
+    return InkWell(
+      onTap: onTap,
       borderRadius: BorderRadius.circular(12),
-      elevation: 2,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        splashColor: const Color(0xFF4A3B2A).withValues(alpha: 0.1),
-        child: Container(
-          width: 100,
-          height: 85,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF4A3B2A), width: 2),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Icono más pequeño
-              Icon(icon, size: 32, color: const Color(0xFF4A3B2A)),
-              const SizedBox(height: 6),
-              // Título con fuente más pequeña
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF4A3B2A),
-                ),
-              ),
-            ],
-          ),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Icon(
+          icon,
+          size: 28,
+          color: isSelected
+              ? const Color(0xFFF6E9C9)
+              : const Color(0xFFF6E9C9).withValues(alpha: 0.5),
         ),
       ),
     );
